@@ -174,7 +174,14 @@ namespace InterCoreBench
                 Console.Write(physicalCores[i]);
                 for (var j = 0; j < latencyResultsNs.GetLength(1); j++)
                 {
-                    Console.Write("," + latencyResultsNs[i, j]);
+                    if (latencyResultsNs[i, j] > 0)
+                    {
+                        Console.Write("," + latencyResultsNs[i, j]);
+                    }
+                    else
+                    {
+                        Console.Write(",");
+                    }
                 }
 
                 Console.WriteLine();
