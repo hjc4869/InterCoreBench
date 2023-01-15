@@ -5,12 +5,13 @@
     <TargetFramework>net7.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <PublishAot>true</PublishAot>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- <PublishAot>true</PublishAot>
     <IlcOptimizationPreference>Size</IlcOptimizationPreference>
     <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <TrimUnusedDependencies>true</TrimUnusedDependencies>
-    <RootPackageReference>false</RootPackageReference>
+    <RootPackageReference>false</RootPackageReference> -->
     <TrimMode>full</TrimMode>
     <DebuggerSupport>false</DebuggerSupport>
     <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>

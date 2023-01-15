@@ -22,9 +22,10 @@ namespace InterCoreBench
         static int[,] latencyResultsNs;
         static ulong[,] bandwidthResultsMBpersec;
 
-        static (ulong count, TimeSpan elapsed) DoSync(int core, SemaphoreSlim wait, SemaphoreSlim notify, bool doCount)
+        static (ulong count, TimeSpan elapsed) DoSync(int core, ref int wait, ref int signal)
         {
             ThreadAffinity.SetAffinity(core, out var ctx);
+            Thread.Yield();
             try
             {
                 var sw = new Stopwatch();
@@ -33,9 +34,11 @@ namespace InterCoreBench
                 var sc = 0UL;
                 while (!cancel)
                 {
-                    wait.Wait();
-                    sc++;
-                    notify.Release();
+                    if (Interlocked.CompareExchange(ref wait, 0, 1) == 1)
+                    {
+                        signal = 1;
+                        sc++;
+                    }
                 }
 
                 sw.Stop();
@@ -49,12 +52,14 @@ namespace InterCoreBench
             finally
             {
                 ThreadAffinity.ResetAffinity(ctx);
+                Thread.Yield();
             }
         }
 
         static (ulong count, TimeSpan elapsed) DoCopy(int core, byte[] from, byte[] to, SemaphoreSlim wait, SemaphoreSlim notify, bool doCount)
         {
             ThreadAffinity.SetAffinity(core, out var ctx);
+            Thread.Sleep(1000);
             try
             {
                 var sw = new Stopwatch();
@@ -80,6 +85,7 @@ namespace InterCoreBench
             finally
             {
                 ThreadAffinity.ResetAffinity(ctx);
+                Thread.Yield();
             }
         }
 
@@ -90,8 +96,9 @@ namespace InterCoreBench
             {
                 cancel = false;
                 Console.Write($"Testing latency between logical core {c1} and {c2}... ");
-                var t1 = Task.Run(() => DoSync(c1, s1, s2, true));
-                var t2 = Task.Run(() => DoSync(c2, s2, s1, false));
+                int v1 = 0, v2 = 1;
+                var t1 = Task.Run(() => DoSync(c1, ref v1, ref v2));
+                var t2 = Task.Run(() => DoSync(c2, ref v2, ref v1));
                 Thread.Sleep(TestPeriodInMs);
                 cancel = true;
                 var (count, elapsed) = t1.GetAwaiter().GetResult();
@@ -105,6 +112,8 @@ namespace InterCoreBench
 
         static unsafe void TestCopy(int c1, int c2, int p1, int p2)
         {
+            ThreadAffinity.SetAffinity(c1, out var ctx);
+            Thread.Sleep(1000);
             using (var s1 = new SemaphoreSlim(1))
             using (var s2 = new SemaphoreSlim(0))
             {
@@ -126,6 +135,9 @@ namespace InterCoreBench
                     bandwidthResultsMBpersec[p2, p1] = (ulong)(count * TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
                 }
             }
+            
+            ThreadAffinity.ResetAffinity(ctx);
+            Thread.Yield();
         }
 
         static void Main(string[] args)
