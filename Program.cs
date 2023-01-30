@@ -91,63 +91,70 @@ namespace InterCoreBench
             }
         }
 
-        static void TestSync(int c1, int c2, int p1, int p2, int testPeriodInMs, bool noOutput = false)
+        static void TestSync(int c1, int c2, int p1, int p2, int testPeriodInMs, int testIterations, bool noOutput = false)
         {
-            using (var s1 = new SemaphoreSlim(1))
-            using (var s2 = new SemaphoreSlim(0))
+            if (!noOutput) Console.Write($"Testing latency between logical core {c1} and {c2}... ");
+            var results = new List<(ulong Count, TimeSpan Elapsed)>();
+            for (var i = 0; i < testIterations; i++)
             {
                 cancel = false;
-                if (!noOutput) Console.Write($"Testing latency between logical core {c1} and {c2}... ");
                 int v1 = 0, v2 = 1;
                 var t1 = Task.Run(() => DoSync(c1, ref v1, ref v2));
                 var t2 = Task.Run(() => DoSync(c2, ref v2, ref v1));
                 Thread.Sleep(testPeriodInMs);
                 cancel = true;
-                var (count, elapsed) = t1.GetAwaiter().GetResult();
-                var (_, elapsed2) = t2.GetAwaiter().GetResult();
-                if (elapsed2 < elapsed) elapsed = elapsed2;
+                var (c, e) = t1.GetAwaiter().GetResult();
+                var (_, e2) = t2.GetAwaiter().GetResult();
+                if (e2 < e) e = e2;
+                results.Add((c, e));
+            }
 
-                if (!noOutput)
-                {
-                    Console.WriteLine($"{elapsed.TotalMilliseconds * 1000 * 1000 / count / 2:0} ns ({count} synchronizations in {elapsed.TotalMilliseconds:0} ms)");
-                    latencyResultsNs[p1, p2] = (int)(elapsed.TotalMilliseconds * 1000 * 1000 / count / 2);
-                    latencyResultsNs[p2, p1] = (int)(elapsed.TotalMilliseconds * 1000 * 1000 / count / 2);
-                }
+            var (count, elapsed) = results.MaxBy(s => (double)s.Count / s.Elapsed.TotalMilliseconds);
+            if (!noOutput)
+            {
+                Console.WriteLine($"{elapsed.TotalMilliseconds * 1000 * 1000 / count / 2:0} ns ({count} synchronizations in {elapsed.TotalMilliseconds:0} ms)");
+                latencyResultsNs[p1, p2] = (int)(elapsed.TotalMilliseconds * 1000 * 1000 / count / 2);
+                latencyResultsNs[p2, p1] = (int)(elapsed.TotalMilliseconds * 1000 * 1000 / count / 2);
             }
         }
 
-        static unsafe void TestCopy(int c1, int c2, int p1, int p2, int testPeriodInMs, bool noOutput = false)
+        static unsafe void TestCopy(int c1, int c2, int p1, int p2, int testPeriodInMs, int testIterations, bool noOutput = false)
         {
+            if (!noOutput) Console.Write($"Testing bandwidth between logical core {c1} and {c2}... ");
             ThreadAffinity.SetAffinity(c1, out var ctx);
             Thread.Yield();
-            using (var s1 = new SemaphoreSlim(1))
-            using (var s2 = new SemaphoreSlim(0))
+            var results = new List<(ulong Count, TimeSpan Elapsed)>();
+            for (var i = 0; i < testIterations; i++)
             {
-                cancel = false;
-                if (!noOutput) Console.Write($"Testing bandwidth between logical core {c1} and {c2}... ");
-                byte[] c1s = new byte[TestCopyBlockSize], s = new byte[TestCopyBlockSize], c2d = new byte[TestCopyBlockSize];
-                (new Random()).NextBytes(c1s);
-                var t1 = Task.Run(() => DoCopy(c1, c1s, s, s1, s2, true));
-                var t2 = Task.Run(() => DoCopy(c2, s, c2d, s2, s1, false));
-                Thread.Sleep(testPeriodInMs);
-                cancel = true;
-                var (count, elapsed) = t1.GetAwaiter().GetResult();
-                var (_, elapsed2) = t2.GetAwaiter().GetResult();
-                if (elapsed2 < elapsed) elapsed = elapsed2;
-
-                if (!noOutput)
+                using (var s1 = new SemaphoreSlim(1))
+                using (var s2 = new SemaphoreSlim(0))
                 {
-                    Console.WriteLine($"{(double)count * TestCopyBlockSize / 1024 / 1024 / 1024 / elapsed.TotalSeconds:0.00} GB/s ({(double)count * TestCopyBlockSize / 1024 / 1024 / 1024:0.00} GB copied in {elapsed.TotalMilliseconds:0} ms)");
-                    bandwidthResultsMBpersec[p1, p2] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
-                    if (!EnableReverseBandwidthTest)
-                    {
-                        bandwidthResultsMBpersec[p2, p1] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
-                    }
+                    cancel = false;
+                    byte[] c1s = new byte[TestCopyBlockSize], s = new byte[TestCopyBlockSize], c2d = new byte[TestCopyBlockSize];
+                    (new Random()).NextBytes(c1s);
+                    var t1 = Task.Run(() => DoCopy(c1, c1s, s, s1, s2, true));
+                    var t2 = Task.Run(() => DoCopy(c2, s, c2d, s2, s1, false));
+                    Thread.Sleep(testPeriodInMs);
+                    cancel = true;
+                    var (c, e) = t1.GetAwaiter().GetResult();
+                    var (_, e2) = t2.GetAwaiter().GetResult();
+                    if (e2 < e) e = e2;
+                    results.Add((c, e));
                 }
             }
             
             ThreadAffinity.ResetAffinity(ctx);
             Thread.Yield();
+            if (!noOutput)
+            {
+                var (count, elapsed) = results.MaxBy(s => (double)s.Count / s.Elapsed.TotalMilliseconds);
+                Console.WriteLine($"{(double)count * TestCopyBlockSize / 1024 / 1024 / 1024 / elapsed.TotalSeconds:0.00} GB/s ({(double)count * TestCopyBlockSize / 1024 / 1024 / 1024:0.00} GB copied in {elapsed.TotalMilliseconds:0} ms)");
+                bandwidthResultsMBpersec[p1, p2] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
+                if (!EnableReverseBandwidthTest)
+                {
+                    bandwidthResultsMBpersec[p2, p1] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
+                }
+            }
         }
 
         static void Main(string[] args)
@@ -173,15 +180,17 @@ namespace InterCoreBench
             bool enableBandwidth = false;
             bool warmup = true;
             bool help = false;
+            var testIterations = 1;
             var optionSet = new OptionSet
             {
                 { "l|test-latency", "Enable latency testing.", _ => enableLatency = true },
                 { "b|test-bandwidth", "Enable bandwidth testing.", _ => enableBandwidth = true },
-                { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems", _ => EnableReverseBandwidthTest = true },
+                { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems.", _ => EnableReverseBandwidthTest = true },
                 { "s|block-size=", "Block size used in bandwidth testing in bytes. (Default: 256 KB)", c => TestCopyBlockSize = int.Parse(c) },
                 { "c|cores=", "List of logical cores to run the program on separated by ','. Default: first logical cores in all physical cores.", c => physicalCores = c.Split(',').Select(s => int.Parse(s)).ToList() },
                 { "i|interval=", "Test interval in milliseconds (Default: 100)", c => TestIntervalInMs = int.Parse(c) },
                 { "d|duration=", "Test duration in milliseconds (Default: 5000)", c => TestPeriodInMs = int.Parse(c) },
+                { "t|iterations=", "Test iterations to take the best result from (Default: 1)", c => testIterations = int.Parse(c) },
                 { "no-warmup", "Disable JIT warmup", _ => warmup = false },
                 { "h|help", "Show this message and exit", c => help = true }
             };
@@ -216,8 +225,8 @@ namespace InterCoreBench
             if (warmup)
             {
                 Console.WriteLine("Initializing...");
-                TestSync(0, 1, 0, 1, TestPeriodInMs, true);
-                TestCopy(0, 1, 0, 1, TestPeriodInMs, true);
+                TestSync(0, 1, 0, 1, TestPeriodInMs, 1, true);
+                TestCopy(0, 1, 0, 1, TestPeriodInMs, 1, true);
                 GC.Collect(3, GCCollectionMode.Forced);
                 Thread.Sleep(TestIntervalInMs);
             }
@@ -230,7 +239,7 @@ namespace InterCoreBench
                     if (enableLatency)
                     {
                         GC.TryStartNoGCRegion(NoGCRegionSize);
-                        TestSync(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs);
+                        TestSync(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs, testIterations);
                         GC.EndNoGCRegion();
                         GC.Collect(3, GCCollectionMode.Forced);
                         Thread.Sleep(TestIntervalInMs);
@@ -239,7 +248,7 @@ namespace InterCoreBench
                     if (enableBandwidth)
                     {
                         GC.TryStartNoGCRegion(NoGCRegionSize);
-                        TestCopy(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs);
+                        TestCopy(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs, testIterations);
                         GC.EndNoGCRegion();
                         GC.Collect(3, GCCollectionMode.Forced);
                         Thread.Sleep(TestIntervalInMs);
@@ -247,7 +256,7 @@ namespace InterCoreBench
                         if (EnableReverseBandwidthTest)
                         {
                             GC.TryStartNoGCRegion(NoGCRegionSize);
-                            TestCopy(physicalCores[j], physicalCores[i], j, i, TestPeriodInMs);
+                            TestCopy(physicalCores[j], physicalCores[i], j, i, TestPeriodInMs, testIterations);
                             GC.EndNoGCRegion();
                             GC.Collect(3, GCCollectionMode.Forced);
                             Thread.Sleep(TestIntervalInMs);
