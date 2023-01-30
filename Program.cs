@@ -13,11 +13,7 @@ namespace InterCoreBench
 {
     class Program
     {
-        static int TestPeriodInMs = 5000;
-        static int TestIntervalInMs = 100;
-        static int TestCopyBlockSize = 256 * 1024;
         const int NoGCRegionSize = 128 * 1024 * 1024; // 128 MiB
-        static bool EnableReverseBandwidthTest = false; // Maybe useful in HMP systems
 
         static IThreadAffinity ThreadAffinity;
         static volatile bool cancel = false;
@@ -118,7 +114,7 @@ namespace InterCoreBench
             }
         }
 
-        static unsafe void TestCopy(int c1, int c2, int p1, int p2, int testPeriodInMs, int testIterations, bool noOutput = false)
+        static unsafe void TestCopy(int c1, int c2, int p1, int p2, int testCopyBlockSize, int testPeriodInMs, int testIterations, bool enableReverseBandwidthTest, bool noOutput = false)
         {
             if (!noOutput) Console.Write($"Testing bandwidth between logical core {c1} and {c2}... ");
             ThreadAffinity.SetAffinity(c1, out var ctx);
@@ -130,7 +126,7 @@ namespace InterCoreBench
                 using (var s2 = new SemaphoreSlim(0))
                 {
                     cancel = false;
-                    byte[] c1s = new byte[TestCopyBlockSize], s = new byte[TestCopyBlockSize], c2d = new byte[TestCopyBlockSize];
+                    byte[] c1s = new byte[testCopyBlockSize], s = new byte[testCopyBlockSize], c2d = new byte[testCopyBlockSize];
                     (new Random()).NextBytes(c1s);
                     var t1 = Task.Run(() => DoCopy(c1, c1s, s, s1, s2, true));
                     var t2 = Task.Run(() => DoCopy(c2, s, c2d, s2, s1, false));
@@ -148,11 +144,11 @@ namespace InterCoreBench
             if (!noOutput)
             {
                 var (count, elapsed) = results.MaxBy(s => (double)s.Count / s.Elapsed.TotalMilliseconds);
-                Console.WriteLine($"{(double)count * TestCopyBlockSize / 1024 / 1024 / 1024 / elapsed.TotalSeconds:0.00} GB/s ({(double)count * TestCopyBlockSize / 1024 / 1024 / 1024:0.00} GB copied in {elapsed.TotalMilliseconds:0} ms)");
-                bandwidthResultsMBpersec[p1, p2] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
-                if (!EnableReverseBandwidthTest)
+                Console.WriteLine($"{(double)count * testCopyBlockSize / 1024 / 1024 / 1024 / elapsed.TotalSeconds:0.00} GB/s ({(double)count * testCopyBlockSize / 1024 / 1024 / 1024:0.00} GB copied in {elapsed.TotalMilliseconds:0} ms)");
+                bandwidthResultsMBpersec[p1, p2] = (ulong)(count * (ulong)testCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
+                if (!enableReverseBandwidthTest)
                 {
-                    bandwidthResultsMBpersec[p2, p1] = (ulong)(count * (ulong)TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
+                    bandwidthResultsMBpersec[p2, p1] = (ulong)(count * (ulong)testCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
                 }
             }
         }
@@ -180,17 +176,21 @@ namespace InterCoreBench
             bool enableBandwidth = false;
             bool warmup = true;
             bool help = false;
-            var testIterations = 1;
+            var testIterations = 5;
+            int testPeriodInMs = 1000;
+            int testIntervalInMs = 100;
+            int testCopyBlockSize = 256 * 1024;
+            bool enableReverseBandwidthTest = false;
             var optionSet = new OptionSet
             {
                 { "l|test-latency", "Enable latency testing.", _ => enableLatency = true },
                 { "b|test-bandwidth", "Enable bandwidth testing.", _ => enableBandwidth = true },
-                { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems.", _ => EnableReverseBandwidthTest = true },
-                { "s|block-size=", "Block size used in bandwidth testing in bytes. (Default: 256 KB)", c => TestCopyBlockSize = int.Parse(c) },
+                { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems.", _ => enableReverseBandwidthTest = true },
+                { "s|block-size=", "Block size used in bandwidth testing in bytes. (Default: 256 KB)", c => testCopyBlockSize = int.Parse(c) },
                 { "c|cores=", "List of logical cores to run the program on separated by ','. Default: first logical cores in all physical cores.", c => physicalCores = c.Split(',').Select(s => int.Parse(s)).ToList() },
-                { "i|interval=", "Test interval in milliseconds (Default: 100)", c => TestIntervalInMs = int.Parse(c) },
-                { "d|duration=", "Test duration in milliseconds (Default: 5000)", c => TestPeriodInMs = int.Parse(c) },
-                { "t|iterations=", "Test iterations to take the best result from (Default: 1)", c => testIterations = int.Parse(c) },
+                { "i|interval=", "Test interval in milliseconds (Default: 100)", c => testIntervalInMs = int.Parse(c) },
+                { "d|duration=", "Test duration in milliseconds (Default: 1000)", c => testPeriodInMs = int.Parse(c) },
+                { "t|iterations=", "Test iterations to take the best result from (Default: 5)", c => testIterations = int.Parse(c) },
                 { "no-warmup", "Disable JIT warmup", _ => warmup = false },
                 { "h|help", "Show this message and exit", c => help = true }
             };
@@ -225,10 +225,10 @@ namespace InterCoreBench
             if (warmup)
             {
                 Console.WriteLine("Initializing...");
-                TestSync(0, 1, 0, 1, TestPeriodInMs, 1, true);
-                TestCopy(0, 1, 0, 1, TestPeriodInMs, 1, true);
+                TestSync(0, 1, 0, 1, testPeriodInMs, 1, true);
+                TestCopy(0, 1, 0, 1, testCopyBlockSize, testPeriodInMs, 1, false, true);
                 GC.Collect(3, GCCollectionMode.Forced);
-                Thread.Sleep(TestIntervalInMs);
+                Thread.Sleep(testIntervalInMs);
             }
 
 
@@ -239,27 +239,27 @@ namespace InterCoreBench
                     if (enableLatency)
                     {
                         GC.TryStartNoGCRegion(NoGCRegionSize);
-                        TestSync(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs, testIterations);
+                        TestSync(physicalCores[i], physicalCores[j], i, j, testPeriodInMs, testIterations);
                         GC.EndNoGCRegion();
                         GC.Collect(3, GCCollectionMode.Forced);
-                        Thread.Sleep(TestIntervalInMs);
+                        Thread.Sleep(testIntervalInMs);
                     }
                     
                     if (enableBandwidth)
                     {
                         GC.TryStartNoGCRegion(NoGCRegionSize);
-                        TestCopy(physicalCores[i], physicalCores[j], i, j, TestPeriodInMs, testIterations);
+                        TestCopy(physicalCores[i], physicalCores[j], i, j, testCopyBlockSize, testPeriodInMs, testIterations, enableReverseBandwidthTest);
                         GC.EndNoGCRegion();
                         GC.Collect(3, GCCollectionMode.Forced);
-                        Thread.Sleep(TestIntervalInMs);
+                        Thread.Sleep(testIntervalInMs);
                         
-                        if (EnableReverseBandwidthTest)
+                        if (enableReverseBandwidthTest)
                         {
                             GC.TryStartNoGCRegion(NoGCRegionSize);
-                            TestCopy(physicalCores[j], physicalCores[i], j, i, TestPeriodInMs, testIterations);
+                            TestCopy(physicalCores[j], physicalCores[i], j, i, testCopyBlockSize, testPeriodInMs, testIterations, enableReverseBandwidthTest);
                             GC.EndNoGCRegion();
                             GC.Collect(3, GCCollectionMode.Forced);
-                            Thread.Sleep(TestIntervalInMs);
+                            Thread.Sleep(testIntervalInMs);
                         }
                     }
 
@@ -268,6 +268,7 @@ namespace InterCoreBench
 
             if (enableLatency)
             {
+                Console.WriteLine();
                 Console.WriteLine("Latency results (ns)");
                 Console.WriteLine();
                 Console.WriteLine("Core ID," + string.Join(',', physicalCores));
