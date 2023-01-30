@@ -187,12 +187,12 @@ namespace InterCoreBench
                 { "b|test-bandwidth", "Enable bandwidth testing.", _ => enableBandwidth = true },
                 { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems.", _ => enableReverseBandwidthTest = true },
                 { "s|block-size=", "Block size used in bandwidth testing in bytes. (Default: 256 KB)", c => testCopyBlockSize = int.Parse(c) },
-                { "c|cores=", "List of logical cores to run the program on separated by ','. Default: first logical cores in all physical cores.", c => physicalCores = c.Split(',').Select(s => int.Parse(s)).ToList() },
-                { "i|interval=", "Test interval in milliseconds (Default: 100)", c => testIntervalInMs = int.Parse(c) },
-                { "d|duration=", "Test duration in milliseconds (Default: 1000)", c => testPeriodInMs = int.Parse(c) },
-                { "t|iterations=", "Test iterations to take the best result from (Default: 5)", c => testIterations = int.Parse(c) },
-                { "no-warmup", "Disable JIT warmup", _ => warmup = false },
-                { "h|help", "Show this message and exit", c => help = true }
+                { "c|cores=", "List of logical cores to run the program on separated by ','. Default: first logical core of every physical core.", c => physicalCores = c.Split(',').Select(s => int.Parse(s)).ToList() },
+                { "i|interval=", "Test interval in milliseconds. (Default: 100)", c => testIntervalInMs = int.Parse(c) },
+                { "d|duration=", "Test duration in milliseconds. (Default: 1000)", c => testPeriodInMs = int.Parse(c) },
+                { "t|iterations=", "Test iterations to take the best result from. (Default: 5)", c => testIterations = int.Parse(c) },
+                { "no-warmup", "Disable JIT warm up.", _ => warmup = false },
+                { "h|help", "Show this message and exit.", c => help = true }
             };
 
             optionSet.Parse(args);
@@ -200,7 +200,7 @@ namespace InterCoreBench
             if (help || !(enableLatency || enableBandwidth))
             {
                 Console.WriteLine("InterCoreBench");
-                Console.WriteLine("(c) 2022 David Huang. All Rights Reserved.");
+                Console.WriteLine("(c) 2023 David Huang. All Rights Reserved.");
                 Console.WriteLine();
                 Console.WriteLine("Usage: InterCoreBench [OPTIONS]");
                 optionSet.WriteOptionDescriptions(Console.Out);
