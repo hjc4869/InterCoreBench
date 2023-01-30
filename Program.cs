@@ -54,7 +54,7 @@ namespace InterCoreBench
             }
         }
 
-        static (ulong count, TimeSpan elapsed) DoCopy(int core, byte[] from, byte[] to, SemaphoreSlim wait, SemaphoreSlim notify, bool doCount)
+        static (ulong count, TimeSpan elapsed) DoCopy(int core, byte[] from, byte[] to, SemaphoreSlim wait, SemaphoreSlim notify)
         {
             ThreadAffinity.SetAffinity(core, out var ctx);
             Thread.Yield();
@@ -128,8 +128,8 @@ namespace InterCoreBench
                     cancel = false;
                     byte[] c1s = new byte[testCopyBlockSize], s = new byte[testCopyBlockSize], c2d = new byte[testCopyBlockSize];
                     (new Random()).NextBytes(c1s);
-                    var t1 = Task.Run(() => DoCopy(c1, c1s, s, s1, s2, true));
-                    var t2 = Task.Run(() => DoCopy(c2, s, c2d, s2, s1, false));
+                    var t1 = Task.Run(() => DoCopy(c1, c1s, s, s1, s2));
+                    var t2 = Task.Run(() => DoCopy(c2, s, c2d, s2, s1));
                     Thread.Sleep(testPeriodInMs);
                     cancel = true;
                     var (c, e) = t1.GetAwaiter().GetResult();
@@ -149,6 +149,63 @@ namespace InterCoreBench
                 if (!enableReverseBandwidthTest)
                 {
                     bandwidthResultsMBpersec[p2, p1] = (ulong)(count * (ulong)testCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
+                }
+            }
+        }
+
+        static void TestMultiCopy(List<(int c1, int c2)> corePairs, int testCopyBlockSize, int testPeriodInMs, int testIterations)
+        {
+            var results = new List<(ulong Count, TimeSpan Elapsed)>();
+            var r = new Random();
+            for (var i = 0; i < testIterations; i++)
+            {
+                Console.WriteLine($"Testing simultaneous copy, iteration {i + 1}.");
+                var semaphoreList = new List<SemaphoreSlim>();
+                var taskList = new List<(Task<(ulong, TimeSpan)>, Task<(ulong, TimeSpan)>)>();
+                try
+                {
+                    cancel = false;
+                    var sw = new Stopwatch();
+                    sw.Start();
+                    foreach (var (c1, c2) in corePairs)
+                    {
+                        var s1 = new SemaphoreSlim(1);
+                        var s2 = new SemaphoreSlim(0);
+                        byte[] c1s = new byte[testCopyBlockSize], s = new byte[testCopyBlockSize], c2d = new byte[testCopyBlockSize];
+                        r.NextBytes(c1s);
+                        taskList.Add((
+                            Task.Factory.StartNew(() => DoCopy(c1, c1s, s, s1, s2), TaskCreationOptions.LongRunning),
+                            Task.Factory.StartNew(() => DoCopy(c2, s, c2d, s2, s1), TaskCreationOptions.LongRunning)
+                        ));
+
+                        semaphoreList.Add(s1);
+                        semaphoreList.Add(s2);
+                    }
+
+                    Thread.Sleep(testPeriodInMs);
+                    cancel = true;
+                    
+                    var totalBytes = 0UL;
+                    var current = 0;
+                    foreach (var (t1, t2) in taskList)
+                    {
+                        var (c, e) = t1.GetAwaiter().GetResult();
+                        var (_, e2) = t2.GetAwaiter().GetResult();
+                        if (e2 < e) e = e2;
+                        totalBytes += c * (ulong)testCopyBlockSize;
+                        Console.WriteLine($"Worker {++current} bandwidth { c * (double)testCopyBlockSize / 1024 / 1024 / 1024 / e.TotalSeconds:0.00} GB/s (copied {c * (double)testCopyBlockSize / 1024 / 1024:0.00} MB in {e.TotalMilliseconds} ms)");
+                    }
+                    
+                    sw.Stop();
+                    Console.WriteLine($"Total bandwidth { (double)totalBytes / 1024 / 1024 / 1024 / sw.Elapsed.TotalSeconds:0.00} GB/s ({totalBytes / 1024 / 1024:0.00} MB copied in {sw.ElapsedMilliseconds} ms)");
+                    Console.WriteLine();
+                }
+                finally
+                {
+                    foreach (var semaphore in semaphoreList)
+                    {
+                        semaphore.Dispose();
+                    }
                 }
             }
         }
@@ -174,6 +231,7 @@ namespace InterCoreBench
             List<int> physicalCores = null;
             bool enableLatency = false;
             bool enableBandwidth = false;
+            bool enableMultipleBandwidth = false;
             bool warmup = true;
             bool help = false;
             var testIterations = 5;
@@ -181,10 +239,13 @@ namespace InterCoreBench
             int testIntervalInMs = 100;
             int testCopyBlockSize = 256 * 1024;
             bool enableReverseBandwidthTest = false;
+            var corePairs = new List<(int CoreA, int CoreB)>();
             var optionSet = new OptionSet
             {
                 { "l|test-latency", "Enable latency testing.", _ => enableLatency = true },
                 { "b|test-bandwidth", "Enable bandwidth testing.", _ => enableBandwidth = true },
+                { "m|multi-bandwidth", "Test bandwidth simultaneously between multiple pairs of cores.", _ => enableMultipleBandwidth = true },
+                { "pairs=", "Specify the core pairs used in simultaneous bandwidth testing. Format example: \"1-2,3-4,5-6\" means copy data from core 1 to 2, 3 to 4, 5 to 6 simultaneously", c => corePairs = c.Split(',').Select(pair => { var p = pair.Split('-').Select(str => int.Parse(str)).ToArray(); return (p[0], p[1]); }).ToList() },
                 { "r|reverse-copy", "Enable reverse copy testing in bandwidth tests. This may be useful in HMP systems.", _ => enableReverseBandwidthTest = true },
                 { "s|block-size=", "Block size used in bandwidth testing in bytes. (Default: 256 KB)", c => testCopyBlockSize = int.Parse(c) },
                 { "c|cores=", "List of logical cores to run the program on separated by ','. Default: first logical core of every physical core.", c => physicalCores = c.Split(',').Select(s => int.Parse(s)).ToList() },
@@ -197,7 +258,7 @@ namespace InterCoreBench
 
             optionSet.Parse(args);
 
-            if (help || !(enableLatency || enableBandwidth))
+            if (help || !(enableLatency || enableBandwidth || enableMultipleBandwidth))
             {
                 Console.WriteLine("InterCoreBench");
                 Console.WriteLine("(c) 2023 David Huang. All Rights Reserved.");
@@ -316,6 +377,21 @@ namespace InterCoreBench
 
                     Console.WriteLine();
                 }
+            }
+
+            if (enableMultipleBandwidth)
+            {
+                if (corePairs == null ||
+                    corePairs.Count == 0)
+                {
+                    Console.WriteLine("At least a pair of logical cores need to be specified using --pairs.");
+                    return;
+                }
+
+                GC.TryStartNoGCRegion(NoGCRegionSize);
+                TestMultiCopy(corePairs, testCopyBlockSize, testPeriodInMs, testIterations);
+                GC.EndNoGCRegion();
+                GC.Collect(3, GCCollectionMode.Forced);
             }
 
             Console.WriteLine("Test finished, press any key to exit.");
