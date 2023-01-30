@@ -12,6 +12,7 @@
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <TrimUnusedDependencies>true</TrimUnusedDependencies>
     <RootPackageReference>false</RootPackageReference> -->
+    <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>full</TrimMode>
     <DebuggerSupport>false</DebuggerSupport>
     <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
