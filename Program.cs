@@ -13,8 +13,8 @@ namespace InterCoreBench
     class Program
     {
         const int TestPeriodInMs = 5000;
-        const int TestIntervalInMs = 1000;
-        const int TestCopyBlockSize = 256 * 1024;
+        const int TestIntervalInMs = 100;
+        const int TestCopyBlockSize = 128 * 1024;
         const bool EnableReverseBandwidthTest = false; // Maybe useful in HMP systems
 
         static IThreadAffinity ThreadAffinity;
@@ -59,7 +59,7 @@ namespace InterCoreBench
         static (ulong count, TimeSpan elapsed) DoCopy(int core, byte[] from, byte[] to, SemaphoreSlim wait, SemaphoreSlim notify, bool doCount)
         {
             ThreadAffinity.SetAffinity(core, out var ctx);
-            Thread.Sleep(1000);
+            Thread.Yield();
             try
             {
                 var sw = new Stopwatch();
@@ -102,7 +102,8 @@ namespace InterCoreBench
                 Thread.Sleep(TestPeriodInMs);
                 cancel = true;
                 var (count, elapsed) = t1.GetAwaiter().GetResult();
-                t2.GetAwaiter().GetResult();
+                var (_, elapsed2) = t2.GetAwaiter().GetResult();
+                if (elapsed2 < elapsed) elapsed = elapsed2;
 
                 Console.WriteLine($"{elapsed.TotalMilliseconds * 1000 * 1000 / count / 2:0} ns ({count} synchronizations in {elapsed.TotalMilliseconds:0} ms)");
                 latencyResultsNs[p1, p2] = (int)(elapsed.TotalMilliseconds * 1000 * 1000 / count / 2);
@@ -113,7 +114,7 @@ namespace InterCoreBench
         static unsafe void TestCopy(int c1, int c2, int p1, int p2)
         {
             ThreadAffinity.SetAffinity(c1, out var ctx);
-            Thread.Sleep(1000);
+            Thread.Yield();
             using (var s1 = new SemaphoreSlim(1))
             using (var s2 = new SemaphoreSlim(0))
             {
@@ -126,7 +127,8 @@ namespace InterCoreBench
                 Thread.Sleep(TestPeriodInMs);
                 cancel = true;
                 var (count, elapsed) = t1.GetAwaiter().GetResult();
-                t2.GetAwaiter().GetResult();
+                var (_, elapsed2) = t2.GetAwaiter().GetResult();
+                if (elapsed2 < elapsed) elapsed = elapsed2;
 
                 Console.WriteLine($"{(double)count * TestCopyBlockSize / 1024 / 1024 / 1024 / elapsed.TotalSeconds:0.00} GB/s ({(double)count * TestCopyBlockSize / 1024 / 1024 / 1024:0.00} GB copied in {elapsed.TotalMilliseconds:0} ms)");
                 bandwidthResultsMBpersec[p1, p2] = (ulong)(count * TestCopyBlockSize / 1024 / 1024 / elapsed.TotalSeconds);
@@ -167,12 +169,15 @@ namespace InterCoreBench
                 {
                     TestSync(physicalCores[i], physicalCores[j], i, j);
                     Thread.Sleep(TestIntervalInMs);
+                    GC.Collect(3, GCCollectionMode.Forced);
                     TestCopy(physicalCores[i], physicalCores[j], i, j);
                     Thread.Sleep(TestIntervalInMs);
+                    GC.Collect(3, GCCollectionMode.Forced);
                     if (EnableReverseBandwidthTest)
                     {
                         TestCopy(physicalCores[j], physicalCores[i], j, i);
                         Thread.Sleep(TestIntervalInMs);
+                        GC.Collect(3, GCCollectionMode.Forced);
                     }
                 }
             }
