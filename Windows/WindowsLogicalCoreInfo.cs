@@ -64,6 +64,7 @@ namespace InterCoreBench.Windows
             RelationAll = 0xffff
         }
 
+        [StructLayout(LayoutKind.Sequential)]
         private struct SYSTEM_LOGICAL_PROCESSOR_INFORMATION
         {
             public UIntPtr ProcessorMask;
